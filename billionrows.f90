@@ -62,8 +62,8 @@ program billionrows
         character(len=40) :: current_line
         integer :: p, num_stations, i, k, n, num_processors
         integer :: output_lines = 1000000000
-        integer :: chunk_size = 10000000
-        real :: rnd_station, rnd_temp
+        integer :: chunk_size = 100000
+        real, dimension(2,100000) :: rnd_stat_temp
 
         ! Read weather stations
         print *, 'Reading Weather Station Data'
@@ -88,28 +88,25 @@ program billionrows
         !num_processors = 1
         print *, 'Generating Data using ', num_processors, ' processors'
         open(unit=20, file=filename, status='new', action='write', iostat=ios)
-        !$OMP PARALLEL DO SHARED(weather_stations) PRIVATE(i, k, n, rnd_station, rnd_temp, current_chunk, current_line)
+        !$OMP PARALLEL DO SHARED(weather_stations) PRIVATE(i, k, n, rnd_stat_temp, current_chunk, current_line)
         do i = 1, output_lines, chunk_size
-
             ! init chunk
             current_chunk%linecount = 0
             if (allocated(current_chunk%lines)) deallocate(current_chunk%lines)
-            allocate(current_chunk%lines(256))
+            allocate(current_chunk%lines(1000))
 
             ! fill chunk
+            call random_number(rnd_stat_temp)
             do k = 1, min(chunk_size, output_lines - i + 1)
-                call random_number(rnd_station)
-                call random_number(rnd_temp)
                 write(current_line,'(A, A, F6.2)') &
-                        trim(weather_stations(int(rnd_station * num_stations) + 1)), ';', &
-                        ((rnd_temp * 200.0) - 100.0)
+                        trim(weather_stations(int(rnd_stat_temp(1,k) * num_stations) + 1)), ';', &
+                        ((rnd_stat_temp(2,k) * 200.0) - 100.0)
                 call append_line(current_chunk, current_line)
             end do
 
             !$OMP CRITICAL(io_write)
             write(20,'(A)') (trim(current_chunk%lines(n)), n=1 ,current_chunk%linecount)
             !$OMP END CRITICAL(io_write)
-
         end do
         !$OMP END PARALLEL DO
         close(20)
