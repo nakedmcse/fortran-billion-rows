@@ -7,6 +7,11 @@ program billionrows
     character(len=256), dimension(:), allocatable :: args
     character(len=256) :: target_file
 
+    type :: output_chunk
+        character(len=20), dimension(:), allocatable :: lines
+        integer :: linecount
+    end type output_chunk
+
     num_args = command_argument_count()
     allocate(args(num_args))
     do idx = 1, num_args
@@ -32,11 +37,32 @@ program billionrows
 
     contains
 
+    subroutine append_line(chunk, line)
+        type(output_chunk) :: chunk
+        character(len=40), dimension(:), allocatable :: temp
+        character(len=40) :: line
+
+        if(size(chunk%lines) - chunk%linecount == 0) then
+            allocate(temp(chunk%linecount * 2))
+            temp(1:chunk%linecount) = chunk%lines
+            deallocate(chunk%lines)
+            allocate(chunk%lines(chunk%linecount * 2))
+            chunk%lines = temp
+            deallocate(temp)
+        end if
+
+        chunk%linecount = chunk%linecount + 1
+        chunk%lines(chunk%linecount) = line
+    end subroutine append_line
+
     subroutine generate(filename)
         character(len=256) :: filename, line
         character(len=20), dimension(50000) :: weather_stations
-        integer :: p, num_stations, i
+        type(output_chunk) :: current_chunk
+        character(len=40) :: current_line
+        integer :: p, num_stations, i, k, n, num_processors
         integer :: output_lines = 1000000000
+        integer :: chunk_size = 10000000
         real :: rnd_station, rnd_temp
 
         ! Read weather stations
@@ -57,19 +83,35 @@ program billionrows
         close(10)
 
         ! Generate data
-        print *, 'Generating Data'
-        open(unit=20, file=filename, status='unknown', position='append', iostat=ios)
-        !$OMP PARALLEL SHARED(weather_stations) PRIVATE(i, rnd_station, rnd_temp)
-        !$OMP DO
-        do i = 1, output_lines
-            call random_number(rnd_station)
-            call random_number(rnd_temp)
-            !$OMP CRITICAL
-            write(20,'(A, A, F6.2)') trim(weather_stations(int(rnd_station * num_stations) + 1)), ';', (rnd_temp * 200.0) - 100.0
-            !$OMP END CRITICAL
+        num_processors = omp_get_num_procs()
+        call omp_set_num_threads(num_processors)
+        !num_processors = 1
+        print *, 'Generating Data using ', num_processors, ' processors'
+        open(unit=20, file=filename, status='new', action='write', iostat=ios)
+        !$OMP PARALLEL DO SHARED(weather_stations) PRIVATE(i, k, n, rnd_station, rnd_temp, current_chunk, current_line)
+        do i = 1, output_lines, chunk_size
+
+            ! init chunk
+            current_chunk%linecount = 0
+            if (allocated(current_chunk%lines)) deallocate(current_chunk%lines)
+            allocate(current_chunk%lines(256))
+
+            ! fill chunk
+            do k = 1, min(chunk_size, output_lines - i + 1)
+                call random_number(rnd_station)
+                call random_number(rnd_temp)
+                write(current_line,'(A, A, F6.2)') &
+                        trim(weather_stations(int(rnd_station * num_stations) + 1)), ';', &
+                        ((rnd_temp * 200.0) - 100.0)
+                call append_line(current_chunk, current_line)
+            end do
+
+            !$OMP CRITICAL(io_write)
+            write(20,'(A)') (trim(current_chunk%lines(n)), n=1 ,current_chunk%linecount)
+            !$OMP END CRITICAL(io_write)
+
         end do
-        !$OMP END DO
-        !$OMP END PARALLEL
+        !$OMP END PARALLEL DO
         close(20)
     end subroutine generate
 
